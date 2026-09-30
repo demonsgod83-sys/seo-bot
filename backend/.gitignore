@@ -1,0 +1,5 @@
+# Actual secrets — never commit
+.env
+
+# Postgres data directory if you ever mount locally
+postgres/data/

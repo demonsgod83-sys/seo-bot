@@ -1,0 +1,21 @@
+# Development artifacts
+.env
+*.test
+*.out
+coverage.html
+
+# Version control
+.git
+.gitignore
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Compiled binary (builder stage produces its own)
+intake-service
+
+# Go cache (not needed in image)
+vendor/

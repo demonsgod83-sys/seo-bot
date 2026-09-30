@@ -1,0 +1,537 @@
+services:
+
+  # ============================================================
+  #  POSTGRESQL — production-grade config
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: seobot-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+
+    command: >
+      postgres
+        -c config_file=/etc/postgresql/postgresql.conf
+
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seobot} -d ${POSTGRES_DB:-seobot_intake}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    networks:
+      - seobot-internal
+
+    shm_size: 256mb
+
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ============================================================
+  #  NATS — JetStream message bus
+  # ============================================================
+  nats:
+    image: nats:2-alpine
+    container_name: seobot-nats
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - nats_data:/data
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    networks:
+      - seobot-internal
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ============================================================
+  #  INTAKE SERVICE
+  # ============================================================
+  intake-service:
+    build:
+      context: ./intake-service
+      dockerfile: Dockerfile
+    container_name: seobot-intake
+    restart: unless-stopped
+    environment:
+      PORT: "7007"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+    ports:
+      - "127.0.0.1:7007:7007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  ORCHESTRATOR SERVICE
+  # ============================================================
+  orchestrator-service:
+    build:
+      context: ./orchestrator-service
+      dockerfile: Dockerfile
+    container_name: seobot-orchestrator
+    restart: unless-stopped
+    environment:
+      PORT: "8090"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  CRAWLER SERVICE
+  # ============================================================
+  crawler-service:
+    build:
+      context: ./crawler-service
+      dockerfile: Dockerfile
+    container_name: seobot-crawler
+    restart: unless-stopped
+    environment:
+      PORT: "8095"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+      STORAGE_DIR: /data/snapshots
+      MAX_PAGES_PER_JOB: "50"
+      MAX_CONCURRENCY: "3"
+    volumes:
+      - snapshots_data:/data/snapshots
+    ports:
+      - "127.0.0.1:8095:8095"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+
+  # ============================================================
+  #  PARSER SERVICE
+  # ============================================================
+  parser-service:
+    build:
+      context: ./parser-service
+      dockerfile: Dockerfile
+    container_name: seobot-parser
+    restart: unless-stopped
+    environment:
+      PORT: "8096"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+      STORAGE_DIR: /data/snapshots
+    volumes:
+      - snapshots_data:/data/snapshots:ro
+    ports:
+      - "127.0.0.1:8096:8096"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  ON-PAGE ANALYZER SERVICE
+  # ============================================================
+  onpage-analyzer:
+    build:
+      context: ./onpage-analyzer
+      dockerfile: Dockerfile
+    container_name: seobot-onpage-analyzer
+    restart: unless-stopped
+    environment:
+      PORT: "8097"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+    ports:
+      - "127.0.0.1:8097:8097"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  TECHNICAL AUDITOR SERVICE
+  # ============================================================
+  technical-auditor:
+    build:
+      context: ./technical-auditor
+      dockerfile: Dockerfile
+    container_name: seobot-technical-auditor
+    restart: unless-stopped
+    environment:
+      PORT: "8098"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+    ports:
+      - "127.0.0.1:8098:8098"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  KEYWORD EXTRACTOR SERVICE
+  # ============================================================
+  keyword-extractor:
+    build:
+      context: ./keyword-extractor
+      dockerfile: Dockerfile
+    container_name: seobot-keyword-extractor
+    restart: unless-stopped
+    environment:
+      PORT: "8099"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+    ports:
+      - "127.0.0.1:8099:8099"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  SCORING SERVICE
+  # ============================================================
+  scoring-service:
+    build:
+      context: ./scoring-service
+      dockerfile: Dockerfile
+    container_name: seobot-scoring-service
+    restart: unless-stopped
+    environment:
+      PORT: "8100"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+      CRITICAL_DEDUCTION: "15"
+      WARNING_DEDUCTION: "5"
+      INFO_DEDUCTION: "1"
+      WEIGHT_TECHNICAL: "0.40"
+      WEIGHT_ONPAGE: "0.35"
+      WEIGHT_CONTENT: "0.25"
+    ports:
+      - "127.0.0.1:8100:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  REPORT SERVICE
+  # ============================================================
+  report-service:
+    build:
+      context: ./report-service
+      dockerfile: Dockerfile
+    container_name: seobot-report-service
+    restart: unless-stopped
+    environment:
+      PORT: "8105"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+      STORAGE_DIR: /data/reports
+      PUBLIC_BASE_URL: http://localhost:8105
+    volumes:
+      - reports_data:/data/reports
+    ports:
+      - "127.0.0.1:8105:8105"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  NOTIFICATION SERVICE
+  # ============================================================
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: seobot-notification-service
+    restart: unless-stopped
+    environment:
+      PORT: "8110"
+      ENV: production
+      GIN_MODE: release
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-seobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deploy}
+      POSTGRES_DB: ${POSTGRES_DB:-seobot_intake}
+      NATS_URL: nats://nats:4222
+      SMTP_ENABLED: "false"
+      DEFAULT_NOTIFY_EMAIL: client@example.com
+    ports:
+      - "127.0.0.1:8110:8110"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ============================================================
+  #  API GATEWAY
+  # ============================================================
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: seobot-gateway
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      ENV: production
+      GIN_MODE: release
+      INTAKE_BASE_URL: http://intake-service:7007
+      ORCHESTRATOR_BASE_URL: http://orchestrator-service:8090
+      API_KEYS: ${API_KEYS:-sk_dev_00000000000000000000000000000001:00000000-0000-0000-0000-000000000001}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - intake-service
+      - orchestrator-service
+      - crawler-service
+      - parser-service
+      - onpage-analyzer
+      - technical-auditor
+      - keyword-extractor
+      - scoring-service
+      - report-service
+      - notification-service
+    networks:
+      - seobot-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+# ============================================================
+#  NETWORKS
+# ============================================================
+networks:
+  seobot-internal:
+    driver: bridge
+
+# ============================================================
+#  VOLUMES
+# ============================================================
+volumes:
+  postgres_data:
+    driver: local
+  nats_data:
+    driver: local
+  snapshots_data:
+    driver: local
+  reports_data:
+    driver: local

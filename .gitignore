@@ -1,0 +1,61 @@
+# Environment & Secrets (Crucial: never commit real credentials)
+.env
+.env.*
+*.env
+!*.env.example
+
+# Go binaries and build artifacts
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Database & Local Storage
+postgres/data/
+**/postgres/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node / Frontend (for future frontend or tooling)
+node_modules/
+.npm
+.next/
+out/
+build/
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE & Editor Configurations
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs & Temporary Files
+logs/
+*.log
+tmp/
+temp/

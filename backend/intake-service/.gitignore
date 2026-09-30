@@ -1,0 +1,23 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+intake-service
+
+# Go workspace
+go.work.sum
+
+# Environment
+.env
+
+# Test binary, build
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
